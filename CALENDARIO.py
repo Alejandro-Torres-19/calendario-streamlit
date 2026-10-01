@@ -3,39 +3,44 @@ import pandas as pd
 import gspread
 import datetime
 
-# CONFIGURACIÓN DE PÁGINA (Debe ser la primera orden de Streamlit)
+# CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Calendario Compartido", layout="wide")
 
-# AUTENTICACIÓN Y CARGA DE DATOS DESDE GOOGLE SHEETS
-@st.cache_data(ttl=10)  # Recarga datos cada 10 segundos
-def cargar_datos_sheets():
+# CONEXIÓN A GOOGLE SHEETS
+def obtener_worksheet():
     credentials = dict(st.secrets["gcp_service_account"])
     gc = gspread.service_account_from_dict(credentials)
     sh = gc.open("Calendario_Compartido")
-    worksheet = sh.get_worksheet(0)
-    
+    return sh.get_worksheet(0)
+
+# CARGAR DATOS
+@st.cache_data(ttl=5)
+def cargar_datos_sheets():
+    worksheet = obtener_worksheet()
     datos = worksheet.get_all_records()
     df = pd.DataFrame(datos)
     
-    if not df.empty and "Fecha" in df.columns:
-        # Homologar la columna Fecha a tipo datetime
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+    if not df.empty:
+        # Asegurar que los nombres de las columnas tengan la primera letra mayúscula
+        df.columns = [col.capitalize() for col in df.columns]
+        if "Fecha" in df.columns:
+            df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
     return df
 
-# FUNCIÓN PARA GUARDAR NUEVA FILA EN GOOGLE SHEETS
+# GUARDAR ACTIVIDAD
 def guardar_en_sheets(fecha, actividad, persona, prioridad):
-    credentials = dict(st.secrets["gcp_service_account"])
-    gc = gspread.service_account_from_dict(credentials)
-    sh = gc.open("Calendario_Compartido")
-    worksheet = sh.get_worksheet(0)
-    
-    # Formato AAAA-MM-DD para guardar en la hoja
+    worksheet = obtener_worksheet()
     fecha_str = fecha.strftime("%Y-%m-%d")
-    
-    # Insertar la fila al final de la hoja
     worksheet.append_row([fecha_str, actividad, persona, prioridad])
 
-# CARGAR DATOS
+# ELIMINAR/COMPLETAR ACTIVIDAD POR ÍNDICE EN GOOGLE SHEETS
+def eliminar_de_sheets(index_fila_df):
+    worksheet = obtener_worksheet()
+    # +2 porque gspread usa índice base 1 y la fila 1 son los encabezados
+    num_fila_sheets = index_fila_df + 2
+    worksheet.delete_rows(num_fila_sheets)
+
+# CARGAR DATOS EN MEMORIA
 df_actividades = cargar_datos_sheets()
 
 st.title("📅 Calendario Compartido Alexos 📅")
@@ -57,15 +62,9 @@ prioridad = st.sidebar.selectbox("Prioridad", ["Baja", "Media", "Alta"])
 if st.sidebar.button("Guardar Actividad"):
     if actividad.strip():
         try:
-            # 1. Escribir directamente en Google Sheets
             guardar_en_sheets(fecha, actividad, persona, prioridad)
-            
-            # 2. Limpiar el caché de la lectura
             st.cache_data.clear()
-            
-            st.sidebar.success("¡Actividad Guardada en Google Sheets!")
-            
-            # 3. Recargar la aplicación para mostrar los datos nuevos
+            st.sidebar.success("¡Actividad Guardada!")
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Error al guardar: {e}")
@@ -77,7 +76,6 @@ hoy = datetime.date.today()
 st.header(f"☀️ Tareas de Hoy ({hoy.strftime('%d/%m/%Y')})")
 
 if not df_actividades.empty and "Fecha" in df_actividades.columns:
-    # Filtrar convirtiendo hoy a Timestamp para comparar con el dataframe
     df_hoy = df_actividades[df_actividades["Fecha"].dt.date == hoy]
 else:
     df_hoy = pd.DataFrame()
@@ -85,30 +83,60 @@ else:
 if not df_hoy.empty:
     for idx, row in df_hoy.iterrows():
         color = COLORES_PERSONAS.get(row["Persona"], "#CCCCCC")
-        st.markdown(
-            f"""
-            <div style="background-color: {color}22; border-left: 6px solid {color}; padding: 10px; border-radius: 5px; margin-bottom: 8px;">
-                <strong>👤 {row['Persona']}</strong> — {row['Actividad']} <em>(Prioridad: {row['Prioridad']})</em>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            st.markdown(
+                f"""
+                <div style="background-color: {color}22; border-left: 6px solid {color}; padding: 10px; border-radius: 5px; margin-bottom: 8px;">
+                    <strong>👤 {row['Persona']}</strong> — {row['Actividad']} <em>(Prioridad: {row['Prioridad']})</em>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        with col2:
+            if st.button("✅ Finalizar", key=f"btn_hoy_{idx}"):
+                eliminar_de_sheets(idx)
+                st.cache_data.clear()
+                st.success("¡Tarea completada!")
+                st.rerun()
 else:
     st.info("No hay actividades registradas para el día de hoy")
 
 st.markdown("----")
 
-# CALENDARIO COMPLETO Y LISTA MENSUAL
-st.header("🗓️ Vista General 🗓️")
+# VISTA GENERAL Y GESTIÓN DE TAREAS
+st.header("🗓️ Vista General y Gestión 🗓️")
 
-tab1, tab2 = st.tabs(["📋 Todas las Actividades", "📆 Filtrar por Mes/Persona"])
+tab1, tab2 = st.tabs(["📋 Lista con Opción de Completar", "📆 Filtrar por Mes/Persona"])
 
 with tab1:
     if not df_actividades.empty:
-        # Formatear la fecha para visualizar en tabla de forma limpia
-        df_ordenado = df_actividades.sort_values(by="Fecha", ascending=True).copy()
-        df_ordenado["Fecha"] = df_ordenado["Fecha"].dt.strftime("%Y-%m-%d")
-        st.dataframe(df_ordenado, use_container_width=True)
+        # Ordenar conservando el índice original para eliminar la fila correcta en Sheets
+        df_ordenado = df_actividades.sort_values(by="Fecha", ascending=True)
+        
+        # Encabezado de la tabla de gestión
+        col_f, col_a, col_p, col_pr, col_acc = st.columns([2, 4, 2, 2, 2])
+        col_f.markdown("**Fecha**")
+        col_a.markdown("**Actividad**")
+        col_p.markdown("**Persona**")
+        col_pr.markdown("**Prioridad**")
+        col_acc.markdown("**Acción**")
+        st.markdown("---")
+
+        for idx, row in df_ordenado.iterrows():
+            c1, c2, c3, c4, c5 = st.columns([2, 4, 2, 2, 2])
+            fecha_str = row["Fecha"].strftime("%Y-%m-%d") if pd.notnull(row["Fecha"]) else "Sin Fecha"
+            
+            c1.write(fecha_str)
+            c2.write(row["Actividad"])
+            c3.write(row["Persona"])
+            c4.write(row["Prioridad"])
+            
+            if c5.button("✅ Marcar Lista", key=f"btn_completar_{idx}"):
+                eliminar_de_sheets(idx)
+                st.cache_data.clear()
+                st.success(f"¡'{row['Actividad']}' completada!")
+                st.rerun()
     else:
         st.write("Aún no se han agregado actividades")
 
@@ -121,7 +149,6 @@ with tab2:
     with col_filtro2:
         mes_filtro = st.slider("Seleccionar Mes: ", 1, 12, hoy.month)
 
-    # FILTRADO DE DATOS
     if not df_actividades.empty:
         df_filtrado = df_actividades[
             (df_actividades["Persona"].isin(persona_filtro)) &
