@@ -26,9 +26,11 @@ def cargar_datos_sheets():
   if not df.empty:
     df.columns = [col.capitalize() for col in df.columns]
 
-    # Si la columna Estado no existe en la hoja, la creamos por defecto
     if "Estado" not in df.columns:
       df["Estado"] = "Pendiente"
+
+    if "Hora" not in df.columns:
+      df["Hora"] = "All-day"
 
     if "Fecha" in df.columns:
       df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
@@ -36,48 +38,58 @@ def cargar_datos_sheets():
   return df
 
 
-# 4. GUARDAR NUEVA ACTIVIDAD
-def guardar_en_sheets(fecha, actividad, persona, prioridad):
+# 4. GUARDAR NUEVA ACTIVIDAD CON SOPORTE ALL-DAY
+def guardar_en_sheets(fecha, hora_str, actividad, persona, prioridad):
   worksheet = obtener_worksheet()
   fecha_str = fecha.strftime("%Y-%m-%d")
-  # Se guarda con estado por defecto "Pendiente"
-  worksheet.append_row([fecha_str, actividad, persona, prioridad, "Pendiente"])
+  worksheet.append_row(
+      [fecha_str, actividad, persona, prioridad, "Pendiente", hora_str]
+  )
 
 
-# 5. CAMBIAR ESTADO DE LA ACTIVIDAD (MARCAR COMO COMPLETADA)
+# 5. CAMBIAR ESTADO
 def cambiar_estado_en_sheets(index_fila_df, nuevo_estado):
   worksheet = obtener_worksheet()
-  num_fila_sheets = index_fila_df + 2  # +2 por encabezados y base 1 de Sheets
-
-  # Buscar el número de columna donde está 'Estado' (generalmente la columna 5 = E)
-  # O actualizar la celda (Fila, Columna 5)
+  num_fila_sheets = index_fila_df + 2
   worksheet.update_cell(num_fila_sheets, 5, nuevo_estado)
 
 
-# 6. CARGAR DATOS EN MEMORIA
+# 6. CARGAR DATOS
 df_actividades = cargar_datos_sheets()
 
 st.title("📅 Calendario Compartido Alexos 📅")
 
-# COLORES ASIGNADOS PARA CADA PERSONA Y ESTADO
+# COLORES ASIGNADOS
 COLORES_PERSONAS = {
     "Alex": "#3498db",  # Azul
     "Alexa": "#e91e63",  # Rosa
 }
-COLOR_COMPLETADO = "#2ecc71"  # Verde brillante para tareas finalizadas
+COLOR_COMPLETADO = "#2ecc71"  # Verde brillante
 
-# 7. BARRA LATERAL: AGREGAR ACTIVIDAD
+# 7. BARRA LATERAL: FORMULARIO MEJORADO
 st.sidebar.header("➕ Agregar nueva actividad")
 
 persona = st.sidebar.selectbox("¿Quién la agrega?", list(COLORES_PERSONAS.keys()))
 actividad = st.sidebar.text_input("Descripción de la actividad")
 fecha = st.sidebar.date_input("Fecha de la actividad", value=datetime.date.today())
+
+# Casilla para definir si es de todo el día
+todo_el_dia = st.sidebar.checkbox("📌 Evento de todo el día", value=True)
+
+if not todo_el_dia:
+  hora_input = st.sidebar.time_input(
+      "Hora de la actividad", value=datetime.time(9, 0)
+  )
+  hora_guardar = hora_input.strftime("%H:%M")
+else:
+  hora_guardar = "All-day"
+
 prioridad = st.sidebar.selectbox("Prioridad", ["Baja", "Media", "Alta"])
 
 if st.sidebar.button("Guardar Actividad"):
   if actividad.strip():
     try:
-      guardar_en_sheets(fecha, actividad, persona, prioridad)
+      guardar_en_sheets(fecha, hora_guardar, actividad, persona, prioridad)
       st.cache_data.clear()
       st.sidebar.success("¡Actividad Guardada!")
       st.rerun()
@@ -88,7 +100,7 @@ if st.sidebar.button("Guardar Actividad"):
 
 # 8. VISTA DEL DÍA ACTUAL
 hoy = datetime.date.today()
-st.header(f"☀️ Tareas de Hoy ({hoy.strftime('%d/%m/%Y')})")
+st.header(f"☀️ Tareas de Hoy ({hoy.strftime('%d-%m-%Y')})")
 
 if not df_actividades.empty and "Fecha" in df_actividades.columns:
   df_hoy = df_actividades[df_actividades["Fecha"].dt.date == hoy]
@@ -98,21 +110,20 @@ else:
 if not df_hoy.empty:
   for idx, row in df_hoy.iterrows():
     es_completada = row.get("Estado") == "Completada"
-
-    # Si está completada se pinta de verde, si no, del color de la persona
     color = (
         COLOR_COMPLETADO
         if es_completada
         else COLORES_PERSONAS.get(row["Persona"], "#888888")
     )
     texto_estado = " (COMPLETADA)" if es_completada else ""
+    hora_evento = str(row.get("Hora", "All-day"))
 
     col1, col2 = st.columns([5, 1])
     with col1:
       st.markdown(
           f"""
                 <div style="background-color: {color}22; border-left: 6px solid {color}; padding: 10px; border-radius: 5px; margin-bottom: 8px;">
-                    <strong>👤 {row['Persona']}</strong> — {row['Actividad']} <em>(Prioridad: {row['Prioridad']})</em> <strong>{texto_estado}</strong>
+                    <strong>🕒 {hora_evento} | 👤 {row['Persona']}</strong> — {row['Actividad']} <em>(Prioridad: {row['Prioridad']})</em> <strong>{texto_estado}</strong>
                 </div>
                 """,
           unsafe_allow_html=True,
@@ -131,7 +142,7 @@ else:
 
 st.markdown("----")
 
-# 9. SECCIÓN DE CALENDARIO VISUAL Y GESTIÓN
+# 9. SECCIÓN CALENDARIO Y GESTIÓN CON SOPORTE ALL-DAY
 st.header("🗓️ Calendario Mensual y Gestión 🗓️")
 
 tab1, tab2 = st.tabs(
@@ -144,28 +155,35 @@ with tab1:
     for idx, row in df_actividades.iterrows():
       if pd.notnull(row["Fecha"]):
         fecha_str = row["Fecha"].strftime("%Y-%m-%d")
-        es_completada = row.get("Estado") == "Completada"
+        hora_val = str(row.get("Hora", "All-day"))
 
-        # Si está completada toma el color verde, de lo contrario el de la persona
+        es_completada = row.get("Estado") == "Completada"
         color_evento = (
             COLOR_COMPLETADO
             if es_completada
             else COLORES_PERSONAS.get(row["Persona"], "#3788d8")
         )
-
         titulo_evento = (
             f"✅ [{row['Persona']}] {row['Actividad']}"
             if es_completada
             else f"[{row['Persona']}] {row['Actividad']}"
         )
 
+        # Lógica para All-day vs Hora específica
+        if hora_val == "All-day" or hora_val == "":
+          is_all_day = True
+          start_val = fecha_str
+        else:
+          is_all_day = False
+          start_val = f"{fecha_str}T{hora_val}:00"
+
         eventos.append({
             "id": str(idx),
             "title": titulo_evento,
-            "start": fecha_str,
-            "end": fecha_str,
+            "start": start_val,
+            "end": start_val,
             "color": color_evento,
-            "allDay": True,
+            "allDay": is_all_day,
         })
 
     calendar_options = {
@@ -177,6 +195,8 @@ with tab1:
         "initialView": "dayGridMonth",
         "selectable": True,
         "editable": False,
+        "slotMinTime": "06:00:00",
+        "slotMaxTime": "23:00:00",
     }
 
     calendar(events=eventos, options=calendar_options, key="apple_calendar")
@@ -187,10 +207,11 @@ with tab2:
   if not df_actividades.empty:
     df_ordenado = df_actividades.sort_values(by="Fecha", ascending=True)
 
-    col_f, col_a, col_p, col_pr, col_est, col_acc = st.columns(
-        [2, 3, 2, 2, 2, 2]
+    col_f, col_h, col_a, col_p, col_pr, col_est, col_acc = st.columns(
+        [2, 1, 3, 2, 2, 2, 2]
     )
     col_f.markdown("**Fecha**")
+    col_h.markdown("**Hora**")
     col_a.markdown("**Actividad**")
     col_p.markdown("**Persona**")
     col_pr.markdown("**Prioridad**")
@@ -199,31 +220,35 @@ with tab2:
     st.markdown("---")
 
     for idx, row in df_ordenado.iterrows():
-      c1, c2, c3, c4, c5, c6 = st.columns([2, 3, 2, 2, 2, 2])
+      c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 1, 3, 2, 2, 2, 2])
+
+      # FORMATO: DD-MM-AAAA
       fecha_str = (
-          row["Fecha"].strftime("%Y-%m-%d")
+          row["Fecha"].strftime("%d-%m-%Y")
           if pd.notnull(row["Fecha"])
           else "Sin Fecha"
       )
+      hora_str = str(row.get("Hora", "All-day"))
       estado_actual = row.get("Estado", "Pendiente")
 
       c1.write(fecha_str)
-      c2.write(row["Actividad"])
-      c3.write(row["Persona"])
-      c4.write(row["Prioridad"])
-      c5.write(
+      c2.write(hora_str)
+      c3.write(row["Actividad"])
+      c4.write(row["Persona"])
+      c5.write(row["Prioridad"])
+      c6.write(
           f"🟢 {estado_actual}"
           if estado_actual == "Completada"
           else f"🟡 {estado_actual}"
       )
 
       if estado_actual != "Completada":
-        if c6.button("✅ Marcar Lista", key=f"btn_completar_{idx}"):
+        if c7.button("✅ Marcar Lista", key=f"btn_completar_{idx}"):
           cambiar_estado_en_sheets(idx, "Completada")
           st.cache_data.clear()
           st.success(f"¡'{row['Actividad']}' completada!")
           st.rerun()
       else:
-        c6.write("✔️ Finalizada")
+        c7.write("✔️ Finalizada")
   else:
     st.write("Aún no se han agregado actividades")
