@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 import datetime
+from streamlit_calendar import calendar
 
 # CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="Calendario Compartido", layout="wide")
@@ -21,7 +22,6 @@ def cargar_datos_sheets():
     df = pd.DataFrame(datos)
     
     if not df.empty:
-        # Asegurar que los nombres de las columnas tengan la primera letra mayúscula
         df.columns = [col.capitalize() for col in df.columns]
         if "Fecha" in df.columns:
             df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
@@ -33,10 +33,9 @@ def guardar_en_sheets(fecha, actividad, persona, prioridad):
     fecha_str = fecha.strftime("%Y-%m-%d")
     worksheet.append_row([fecha_str, actividad, persona, prioridad])
 
-# ELIMINAR/COMPLETAR ACTIVIDAD POR ÍNDICE EN GOOGLE SHEETS
+# ELIMINAR ACTIVIDAD
 def eliminar_de_sheets(index_fila_df):
     worksheet = obtener_worksheet()
-    # +2 porque gspread usa índice base 1 y la fila 1 son los encabezados
     num_fila_sheets = index_fila_df + 2
     worksheet.delete_rows(num_fila_sheets)
 
@@ -45,10 +44,10 @@ df_actividades = cargar_datos_sheets()
 
 st.title("📅 Calendario Compartido Alexos 📅")
 
-# COLORES ASIGNADOS
+# COLORES ASIGNADOS PARA CADA PERSONA (Estilo Apple Calendar)
 COLORES_PERSONAS = {
-    "Alex": "#87CEEB",
-    "Alexa": "#E4007C",
+    "Alex": "#3498db",   # Azul
+    "Alexa": "#e91e63",  # Rosa / Magenta
 }
 
 # BARRA LATERAL: AGREGAR ACTIVIDAD
@@ -82,7 +81,7 @@ else:
 
 if not df_hoy.empty:
     for idx, row in df_hoy.iterrows():
-        color = COLORES_PERSONAS.get(row["Persona"], "#CCCCCC")
+        color = COLORES_PERSONAS.get(row["Persona"], "#888888")
         col1, col2 = st.columns([5, 1])
         with col1:
             st.markdown(
@@ -104,17 +103,50 @@ else:
 
 st.markdown("----")
 
-# VISTA GENERAL Y GESTIÓN DE TAREAS
-st.header("🗓️ Vista General y Gestión 🗓️")
+# SECCIÓN DE CALENDARIO VISUAL Y LISTA
+st.header("🗓️ Calendario Mensual y Gestión 🗓️")
 
-tab1, tab2 = st.tabs(["📋 Lista con Opción de Completar", "📆 Filtrar por Mes/Persona"])
+tab1, tab2 = st.tabs(["📅 Vista Calendario (iOS Style)", "📋 Lista de Tareas y Eliminación"])
 
 with tab1:
+    if not df_actividades.empty and "Fecha" in df_actividades.columns:
+        # Preparar los eventos en el formato requerido por FullCalendar / streamlit-calendar
+        eventos = []
+        for idx, row in df_actividades.iterrows():
+            if pd.notnull(row["Fecha"]):
+                fecha_str = row["Fecha"].strftime("%Y-%m-%d")
+                color = COLORES_PERSONAS.get(row["Persona"], "#3788d8")
+                
+                eventos.append({
+                    "id": str(idx),
+                    "title": f"[{row['Persona']}] {row['Actividad']}",
+                    "start": fecha_str,
+                    "end": fecha_str,
+                    "color": color,
+                    "allDay": True
+                })
+
+        # Opciones visuales del calendario
+        calendar_options = {
+            "headerToolbar": {
+                "left": "today prev,next",
+                "center": "title",
+                "right": "dayGridMonth,timeGridWeek"
+            },
+            "initialView": "dayGridMonth",
+            "selectable": True,
+            "editable": False,
+        }
+
+        # Renderizar el widget interactivo
+        state = calendar(events=eventos, options=calendar_options, key="apple_calendar")
+    else:
+        st.write("Aún no hay actividades para mostrar en el calendario.")
+
+with tab2:
     if not df_actividades.empty:
-        # Ordenar conservando el índice original para eliminar la fila correcta en Sheets
         df_ordenado = df_actividades.sort_values(by="Fecha", ascending=True)
         
-        # Encabezado de la tabla de gestión
         col_f, col_a, col_p, col_pr, col_acc = st.columns([2, 4, 2, 2, 2])
         col_f.markdown("**Fecha**")
         col_a.markdown("**Actividad**")
@@ -139,25 +171,3 @@ with tab1:
                 st.rerun()
     else:
         st.write("Aún no se han agregado actividades")
-
-with tab2:
-    col_filtro1, col_filtro2 = st.columns(2)
-
-    with col_filtro1:
-        persona_filtro = st.multiselect("Filtrar por Persona: ", options=list(COLORES_PERSONAS.keys()), default=list(COLORES_PERSONAS.keys()))
-
-    with col_filtro2:
-        mes_filtro = st.slider("Seleccionar Mes: ", 1, 12, hoy.month)
-
-    if not df_actividades.empty:
-        df_filtrado = df_actividades[
-            (df_actividades["Persona"].isin(persona_filtro)) &
-            (df_actividades["Fecha"].dt.month == mes_filtro)
-        ].copy()
-        
-        if not df_filtrado.empty:
-            df_filtrado["Fecha"] = df_filtrado["Fecha"].dt.strftime("%Y-%m-%d")
-            st.write(f"Resultados para el mes **{mes_filtro}**:")
-            st.dataframe(df_filtrado, use_container_width=True)
-        else:
-            st.write("No se encontraron registros con los filtros seleccionados.")
