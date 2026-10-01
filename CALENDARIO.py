@@ -103,7 +103,7 @@ tab1, tab2 = st.tabs(["📋 Todas las Actividades", "📆 Filtrar por Mes/Person
 with tab1:
     if not df_actividades.empty:
         #ORDENAR POR FECHA
-        df_ordenado = df_actividades.sort_value(by="Fecha")
+        df_ordenado = df_actividades.sort_values(by="Fecha")
         st.dataframe(df_ordenado, use_container_width=True)
     else:
         st.write("Aún no se han agregado actividades")
