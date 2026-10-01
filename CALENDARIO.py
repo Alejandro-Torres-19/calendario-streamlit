@@ -106,7 +106,7 @@ st.markdown("----")
 # SECCIÓN DE CALENDARIO VISUAL Y LISTA
 st.header("🗓️ Calendario Mensual y Gestión 🗓️")
 
-tab1, tab2 = st.tabs(["📅 Vista Calendario (iOS Style)", "📋 Lista de Tareas y Eliminación"])
+tab1, tab2 = st.tabs(["📅 Vista Calendario", "📋 Lista de Tareas y Eliminación"])
 
 with tab1:
     if not df_actividades.empty and "Fecha" in df_actividades.columns:
